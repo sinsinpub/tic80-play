@@ -2,7 +2,6 @@
 -- author: sin_sin
 -- desc:   SEGA Deep Scan arcade game clone.
 -- script: lua
--- pal: 0000000000aa00aa0000aaaaaa0000aa00aaaa5500aaaaaa5555550000ff00ff0000ffffff0000ff00ffffff00ffffff
 
 -- global constants
 local SW,SH=240,136
@@ -20,7 +19,7 @@ local pal={
 }
 -- names and channels of sfx
 local sfn={
-	sonar=0,mine=1,charge=2,
+	sonar=0,explo=1,charge=2,mine=3,
 }
 -- global variables
 local var={}
@@ -29,14 +28,13 @@ local ec={}
 -- function shortcuts
 local int,abs,rnd,min,max=math.floor,math.abs,math.random,math.min,math.max
 local format,len,rep,chr=string.format,string.len,string.rep,string.char
-local inst,delt=table.insert,table.remove
+local inst=table.insert
 
 local scenes={
 	title=function(t)
 		updateTitle(t)
 		clearSea()
 		drawTitle(t)
-		drawHud()
 	end,
 	start=function(t)
 		updateStart(t)
@@ -44,14 +42,9 @@ local scenes={
 		drawStart(t)
 	end,
 	stage=function(t)
-		updateEntities(t)
+		updateStage(t)
 		clearSea()
-		drawEntities(t)
-		drawHud(t)
-	end,
-	bonus=function(t)
-	end,
-	over=function(t)
+		drawStage(t)
 	end,
 }
 
@@ -67,24 +60,40 @@ function init()
 	var.flashDur=0
 	var.flashFreq=4
 	var.seaFric=0.2
-	var.maxInt=9999
-	var.maxScore=99990
-	var.hiscore=var.hiscore or 3000
-	toScene("title",initTitle)
-end
-
-function initTitle(fs)
-	music()
-	var.delay=0
 	var.rank=99
 	var.score=0
 	var.life=5
+	var.maxInt=9999
+	var.maxScore=99990
+	var.hiscore=var.hiscore or 3000
 	var.maxCharges=6
 	var.maxSubs=8
 	var.maxMines=10
 	var.advCharge=Y
 	var.hitMine=Y
+	toScene("title",initTitle)
+end
+
+function resetEntities()
 	initPlayer()
+	initSubs()
+end
+
+function initTitle(ps)
+	music()
+	resetEntities()
+	var.delay=0
+	ec.player.move=N
+	if ps=="stage" then
+		trace("== DEEPSCAN ==")
+		trace("SCORE .. "..var.score)
+		trace("HISCORE  "..var.hiscore)
+		trace("--------------")
+		trace("SHOOT .. "..var.stats.shot)
+		trace("HIT .... "..var.stats.hit)
+		trace("RATIO .. "..var.stats.rate.."%")
+		trace("==============")
+	end
 end
 
 function updateTitle(t)
@@ -97,15 +106,18 @@ function updateTitle(t)
 			toScene("start",initStart)
 		end
 	end
+	updateSubs(t)
 end
 
 function drawTitle(t)
 	drawPlayer()
+	drawSubs()
 	if t%120<60 then printc("GAME OVER",-7) end
 	printc("@ SEGA 1979",-11)
+	drawHud()
 end
 
-function initStart(fs)
+function initStart(ps)
 	music()
 end
 
@@ -132,9 +144,22 @@ function drawStart(t)
 	printc("PRESS BUTTON TO START!",-15,c)
 end
 
-function initStage(fs)
+function initStage(ps)
 	music()
 	initGame()
+end
+
+function initGame()
+	var.rank=99
+	var.score=0
+	var.life=5
+	var.gamest=N
+	var.stats={
+		stime=0,shot=0,hit=0,rate=0,
+	}
+	resetEntities()
+	-- stage start time
+	var.stats.stime=time()
 end
 
 function initPlayer()
@@ -153,6 +178,13 @@ function initPlayer()
 	pl.vx,pl.vy=0,0
 	pl.ax,pl.ay=0.5,0.3
 	pl.maxv=1
+	pl.stime=0
+	pl.show=Y
+	pl.move=Y
+	pl.ani={
+		state=0,
+		cf=0,mf=5,ft=45,
+	}
 	pl.shot=0
 	-- 2-side DCP cool down timer
 	pl.shotInterval=52
@@ -166,10 +198,12 @@ function initPlayer()
 				id=160,sc=1,fl=0,ro=0,sw=1,sh=1,
 				ox=2,oy=3,w=4,h=3,
 			},
-			-- is show, is move, move per tick
+			-- is show, is move, ticks per move
 			sh=N,mv=N,mt=5,
-			-- anime state, anime index, anime per tick, max anime frame
-			st=0,af=0,at=10,mf=4,
+			-- anime state, frame index, ticks per frame, max frame
+			ani={
+				st=0,cf=0,ft=10,mf=4,
+			},
 			x=0,y=0,vx=0,vy=0,
 		})
 	end
@@ -187,7 +221,9 @@ function initNewSub(s)
 	s.vx=(-d)^d*rnd(4,11)/10
 	s.vy=0
 	s.lv=int(((s.y-AIRH)/(VH-AIRH))*9)+1
-	s.st,s.af,s.at,s.mf=0,0,30,3
+	s.ani={
+		st=0,cf=0,ft=30,mf=3,
+	}
 	-- mine launcher rate and cool down
 	s.mineRate=7
 	s.mineTick=0
@@ -211,37 +247,47 @@ function initSubs()
 				ox=2,oy=2,w=4,h=4,
 			},
 			sh=N,mv=N,mt=8,
-			st=0,af=0,at=20,mf=2,
+			ani={
+				st=0,cf=0,ft=20,mf=2,
+			},
 			x=0,y=0,vx=0,vy=0,
 		})
 	end
 end
 
-function initGame()
-	initPlayer()
-	initSubs()
-	var.gamest=N
-	var.stats={
-		stime=0,shot=0,hit=0,rate=0,
-	}
-	-- stage start time
-	var.stats.stime=time()
-end
-
 function updatePlayer(t)
 	local p=ec.player
+	local pa=p.ani
 	local dy,dx=0,0
-	if btnp(7) and var.debug then reset() end
-	if btnp(6) and var.debug then var.flashDur=30 end
-	if btn(0) and var.advCharge then dy=-p.ay end
-	if btn(1) and var.advCharge then dy=p.ay end
-	if btn(2) then dx=-p.ax end
-	if btn(3) then dx=p.ax end
+	local toSinkState=function()
+		p.move,pa.state=N,1
+		var.flashDur=pa.ft//2
+		playSe(sfn.explo,pa.ft)
+	end
+	local decreaseLife=function()
+		var.life=clamp(var.life-1,0)
+		if var.life<=0 then
+			toScene("title",initTitle)
+		else
+			resetEntities()
+		end
+	end
+	if var.debug then
+		if btnp(7) then reset() end
+		if btnp(6) then var.flashDur=pa.ft//2 end
+	end
+	p.shot=0
+	if p.move then
+		if btn(0) and var.advCharge then dy=-p.ay end
+		if btn(1) and var.advCharge then dy=p.ay end
+		if btn(2) then dx=-p.ax end
+		if btn(3) then dx=p.ax end
+		if btn(4) then p.shot=1 end
+		if btn(5) then p.shot=2 end
+		if btn(7) then toSinkState() end
+	end
 	p.vx=clamp(p.vx+dx,-p.maxv,p.maxv)
 	p.vy=dy
-	p.shot=0
-	if btn(4) then p.shot=1 end
-	if btn(5) then p.shot=2 end
 	p.x=clamp(p.x+p.vx,8,VW-p.spd.w-8)
 	-- slow DD down by friction
 	if p.vx>0 then
@@ -251,9 +297,41 @@ function updatePlayer(t)
 	end
 	p.shotTickL=clamp(p.shotTickL-1,0)
 	p.shotTickR=clamp(p.shotTickR-1,0)
+	if p.move and colliPlayerMines(p) then
+		toSinkState()
+	end
+	if pa.state>0 and t%pa.ft==0 then
+		pa.cf=clamp(pa.cf+1,0,pa.mf)
+		if p.show and pa.cf>=pa.mf then
+			p.show=N
+			p.stime=time()
+		end
+		if elapsed(3000,p.stime)
+			and not p.show then decreaseLife() end
+	end
+end
+
+function colliPlayerMines(p)
+	if var.debug then return N end
+	for i,m in ipairs(ec.mines) do
+		local ma=m.ani
+		if m.mv and ma.st==1
+			and m.x+m.spd.w-1>p.x+8
+			and m.x<p.x+p.spd.w-8 then
+			ma.st=2
+			ma.cf,ma.mf=0,2
+			ma.ft=p.ani.mf//2*p.ani.ft
+			if m.x+m.spd.w//2>=p.x+p.spd.w//2 then
+				p.spd.fl=1
+			end
+			return Y
+		end
+	end
+	return N
 end
 
 function colliDepthChargeMines(c)
+	if not var.hitMine then return N end
 	for i,m in ipairs(ec.mines) do
 		if m.mv and c.y>=AIRH
 			and m.x+m.spd.w-1>c.x
@@ -271,15 +349,14 @@ function updateDepthCharges(t)
 	local p=ec.player
 	local sts=var.stats
 	for i,c in ipairs(ec.charges) do
+		local ca=c.ani
 		if c.mv then
-			if var.hitMine and colliDepthChargeMines(c) then
-				c.st=1
-				c.af,c.mf=0,4
-				if not var.mute then
-					sfx(sfn.charge,"C-2",c.mf*c.at,sfn.charge,7)
-				end
+			if colliDepthChargeMines(c) then
+				ca.st=1
+				ca.cf,ca.mf=0,4
+				playSe(sfn.charge,ca.mf*ca.ft,12)
 			end
-			if t%c.mt==0 and c.st==0 then
+			if t%c.mt==0 and ca.st==0 then
 				c.x=clamp(c.x+c.vx,0,VW-c.spd.w)
 				c.y=clamp(c.y+c.vy,0,VH-c.spd.h)
 			end
@@ -287,22 +364,20 @@ function updateDepthCharges(t)
 				c.mv,c.sh=N,N
 			end
 			-- hit sea floor
-			if c.y>=VH-c.spd.h or c.st==1 then
-				if c.st==1 then
-					if c.af>=c.mf-1 then
+			if c.y>=VH-c.spd.h or ca.st==1 then
+				if ca.st==1 then
+					if ca.cf>=ca.mf-1 then
 						c.mv,c.sh=N,N
 					end
 				else
-					c.st=1
-					c.af,c.mf=0,4
-					if not var.mute then
-						sfx(sfn.charge,"C-2",c.mf*c.at,sfn.charge,7)
-					end
+					ca.st=1
+					ca.cf,ca.mf=0,4
+					playSe(sfn.charge,ca.mf*ca.ft)
 				end
 			end
 			-- into water
-			if c.y>=AIRH and t%c.at==0 then
-				c.af=(c.af+1)%c.mf
+			if c.y>=AIRH and t%ca.ft==0 then
+				ca.cf=(ca.cf+1)%ca.mf
 			end
 		else
 			-- project to left
@@ -310,41 +385,48 @@ function updateDepthCharges(t)
 				c.x=p.x-8
 				c.mv,c.sh=Y,Y
 				p.shotTickL=p.shotInterval
-				sts.shot=clamp(sts.shot+1,var.maxInt)
+				sts.shot=clamp(sts.shot+1,1,var.maxInt)
 			end
 			-- project to right
 			if p.shot==2 and p.shotTickR<1 then
 				c.x=p.x+4+p.spd.w
 				c.mv,c.sh=Y,Y
 				p.shotTickR=p.shotInterval
-				sts.shot=clamp(sts.shot+1,var.maxInt)
+				sts.shot=clamp(sts.shot+1,1,var.maxInt)
 			end
 			if c.mv then
 				c.y=p.y+8
 				c.vx,c.vy=0,1+p.vy
-				c.af,c.mf=0,4
-				c.st=0
+				ca.cf,ca.mf=0,4
+				ca.st=0
 			end
 		end
 	end
 end
 
 function colliSubCharges(s)
+	local sts=var.stats
 	for i,c in ipairs(ec.charges) do
 		if c.mv and c.x+c.spd.w-1>s.x
 			and c.x<s.x+s.spd.w-1
 			and c.y+c.spd.h-1>s.y+1
 			and c.y<s.y+s.spd.h-1 then
-			s.st,s.af=1,0
+			s.ani.st,s.ani.cf=1,0
 			s.mv=N
 			c.sh,c.mv=N,N
-			if not var.mute then
-				sfx(sfn.charge,"G-2",c.mf*c.at,sfn.charge)
-			end
+			playSe(sfn.explo,c.ani.mf*c.ani.ft,12)
+			sts.hit=clamp(sts.hit+1,0,var.maxInt)
+			sts.rate=int(sts.hit/(sts.shot or sts.hit)*100)
 			return Y
 		end
 	end
 	return N
+end
+
+function updateScoreRank(gsc)
+	var.score=clamp(var.score+gsc,0,var.maxScore)
+	var.rank=clamp(100-int(var.score/var.hiscore*100),1,99)
+	var.hiscore=max(var.hiscore,var.score)
 end
 
 function updateSubs(t)
@@ -357,6 +439,7 @@ function updateSubs(t)
 	local borderL=-VW//2
 	local borderR=VW+VW//2
 	for i,s in ipairs(ec.subs) do
+		local sa=s.ani
 		if s.mv and not colliSubCharges(s) then
 			s.x=clamp(s.x+s.vx,borderL,borderR-s.spd.w)
 			s.y=clamp(s.y+s.vy,AIRH,VH-s.spd.h)
@@ -366,26 +449,27 @@ function updateSubs(t)
 			end
 			s.mineTick=clamp(s.mineTick-1,0)
 			-- launch random mine on screen
-			if s.x>0 and s.x<VW-s.spd.w then
-				if rnd(0,99)<s.mineRate and s.mineTick<1 then
+			if s.x>s.spd.w and s.x<VW-s.spd.w*2 then
+				if ec.player.move and s.mineTick<1
+					and rnd(0,99)<s.mineRate then
 					local fm=findFreeMine()
 					if fm then
 						fm.x=s.x+s.spd.w//2
 						fm.y,fm.vy=s.y,-1
-						fm.af,fm.st=0,0
-						fm.mf=2
+						fm.ani.cf,fm.ani.st=0,0
+						fm.ani.mf=2
+						fm.ani.ft=20
 						fm.sh,fm.mv=Y,Y
 						s.mineTick=s.mineInterval
 					end
 				end
 			end
 		elseif s.sh then
-			if t%s.at==0 then
-				s.af=clamp(s.af+1)%s.mf
+			if t%sa.ft==0 then
+				sa.cf=clamp(sa.cf+1)%sa.mf
 			end
-			if s.st==1 and s.af>=s.mf-1 then
-				var.score=clamp(var.score+s.lv*10,0,var.maxScore)
-				var.hiscore=max(var.hiscore,var.score)
+			if sa.st==1 and sa.cf>=sa.mf-1 then
+				updateScoreRank(s.lv*10)
 				s.sh=N
 			end
 		else
@@ -396,6 +480,7 @@ end
 
 function updateNavalMines(t)
 	for i,m in ipairs(ec.mines) do
+		local ma=m.ani
 		if m.mv then
 			if t%m.mt==0 then
 				m.x=clamp(m.x+m.vx,0,VW-m.spd.w)
@@ -404,32 +489,30 @@ function updateNavalMines(t)
 			if m.x<0 or m.y>=VH or m.x>VW-m.spd.w then
 				m.mv,m.sh=N,N
 			end
-			if t%m.at==0 then
-				m.af=(m.af+1)%m.mf
+			if t%ma.ft==0 then
+				ma.cf=(ma.cf+1)%ma.mf
 			end
 			-- hit sea surface
 			if m.y<=AIRH then
 				m.y=AIRH
-				if m.st==1 then
-					if m.af>=m.mf-1 then
+				if ma.st>=1 then
+					if ma.cf>=ma.mf-1 then
 						m.mv,m.sh=N,N
 					end
 				else
-					m.af,m.st=0,1
-					m.mf=3
-					if not var.mute then
-						sfx(sfn.mine,"C-3",m.mf*m.at,sfn.mine)
-					end
+					ma.cf,ma.st=0,1
+					ma.mf=3
+					playSe(sfn.mine,ma.mf*ma.ft)
 				end
 			end
 		end
 	end
 end
 
-function updateEntities(t)
+function updateStage(t)
 	if elapsed(500) and not var.gamest then
 		var.gamest=Y
-		if not var.mute then music(0,-1,-1,Y) end
+		playBgm(1)
 	end
 	if var.gamest then
 		updatePlayer(t)
@@ -439,12 +522,34 @@ function updateEntities(t)
 	end
 end
 
+function drawStage(t)
+	drawEntities(t)
+	drawHud(t)
+end
+
+function drawEntities(t)
+	drawDepthCharges(t)
+	drawPlayer(t)
+	drawNavalMines(t)
+	drawSubs(t)
+end
+
 function drawPlayer()
 	local p=ec.player
 	local sp=p.spd
-	spr(sp.id,
-		p.x-sp.ox,p.y-sp.oy,pal.sea,
-		sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
+	local ani=p.ani
+	local f=ani.cf*4
+	if p.show and ani.cf<5 then
+		if ani.cf==4 then
+			spr(sp.id+f+28,
+				p.x-sp.ox,p.y-sp.oy+sp.h//2,pal.sea,
+				sp.sc,sp.fl,sp.ro,sp.sw,sp.sh//2)
+		else
+			spr(sp.id+f,
+				p.x-sp.ox,p.y-sp.oy,pal.sea,
+				sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
+		end
+	end
 end
 
 function drawDepthCharges()
@@ -454,8 +559,8 @@ function drawDepthCharges()
 		anyc=c
 		if c.sh then
 			local sp=c.spd
-			spr(sp.id+c.af+c.st*4,
-				c.x-sp.ox,c.y-sp.oy-c.st*2,
+			spr(sp.id+c.ani.cf+c.ani.st*4,
+				c.x-sp.ox,c.y-sp.oy-c.ani.st*2,
 				pal.sea,sp.sc,sp.fl,sp.ro,
 				sp.sw,sp.sh)
 		else
@@ -476,9 +581,10 @@ function drawSubs()
 	for i,s in ipairs(ec.subs) do
 		if s.sh then
 			local sp=s.spd
-			if s.st==1 then
+			local ani=s.ani
+			if ani.st>=1 then
 				-- explosion anime
-				spr(sp.id+s.st*2+s.af*2,
+				spr(sp.id+ani.st*2+ani.cf*2,
 					s.x-sp.ox,s.y-sp.oy,pal.sea,
 					sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
 			else
@@ -501,15 +607,21 @@ function drawNavalMines()
 	for i,m in ipairs(ec.mines) do
 		if m.sh then
 			local sp=m.spd
-			if m.st==1 and m.af>0 then
+			local ma=m.ani
+			if ma.st>=2 then
+				spr(sp.id+ma.cf+5-16,
+				m.x-sp.ox,m.y-sp.oy-10,
+				pal.sea,sp.sc,sp.fl,sp.ro,
+				sp.sw,sp.sh+1)
+			elseif ma.st==1 and ma.cf>0 then
 				-- different size on explosion
-				spr(sp.id+m.af+m.st*2-16,
-				m.x-sp.ox,m.y-sp.oy-m.st*10,
+				spr(sp.id+ma.cf+ma.st*2-16,
+				m.x-sp.ox,m.y-sp.oy-10,
 				pal.sea,sp.sc,sp.fl,sp.ro,
 				sp.sw,sp.sh+1)
 			else
-				spr(sp.id+m.af+m.st*2,
-					m.x-sp.ox,m.y-sp.oy-m.st*2,
+				spr(sp.id+ma.cf+ma.st*2,
+					m.x-sp.ox,m.y-sp.oy-ma.st*2,
 					pal.sea,sp.sc,sp.fl,sp.ro,
 					sp.sw,sp.sh)
 			end
@@ -517,17 +629,10 @@ function drawNavalMines()
 	end
 end
 
-function drawEntities(t)
-	drawDepthCharges(t)
-	drawPlayer(t)
-	drawNavalMines(t)
-	drawSubs(t)
-end
-
 function drawRadarDots(t)
 	local radx=(VW-RADW)//2
 	local triw=(RADW-8)//3-1
-	if ec.player then
+	if ec.player and ec.player.show then
 		local p=ec.player
 		local x=p.x/VW*(RADW-triw*2)
 		spr(177,radx+triw+x,VH+5,
@@ -594,6 +699,24 @@ function clearSea(c)
 		-- default border pure black
 		poke(0x3FF8,pal.black)
 	end
+end
+
+function playBgm(n)
+	if not var.mute and n>0 then
+		music(n-1,-1,-1,Y)
+	else
+		music()
+	end
+end
+
+function playSe(n,t,v)
+	local sfxlib={
+		[sfn.explo] =function() sfx(sfn.explo,"G-3",t or 40,sfn.explo,v or 15)  end,
+		[sfn.charge]=function() sfx(sfn.charge,"C-2",t or 40,sfn.charge,v or 8) end,
+		[sfn.mine]  =function() sfx(sfn.mine,"C-8",t or 60,sfn.mine,v or 15) end,
+	}
+	local se=sfxlib[n]
+	if not var.mute and se then se() end
 end
 
 function sgn(v)
@@ -1188,11 +1311,12 @@ init()
 -- 000:00000000000000000000000000000000000000000000000000000000000010003000500070009000a000b000c000c000d000d000e000e000e000f000400000000000
 -- 001:0300230053009300c300d30043003300330053007300a300c300f300e300d300c300c300d300e300f300f300e300d300d300e300f300f300f300f300200000000000
 -- 002:433053308330d330e310d300b30093007300530073009300d300e300d300b300930073009300b300d300f300e300c30093009300c300e300f300f300100000000000
+-- 003:0300030003000300130023003300430053006300730083009300a300b300c300d300e300f300f300f300f300f300f300f300f300f300f300f300f300700000000000
 -- </SFX>
 
 -- <PATTERNS>
--- 000:baa108baa108000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
--- 001:b88108b88108000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+-- 000:baa108b99108b88108000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+-- 001:000000000000b88108b77108b66108000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 -- </PATTERNS>
 
 -- <TRACKS>
