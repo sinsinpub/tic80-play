@@ -21,6 +21,11 @@ local pal={
 local sfn={
 	sonar=0,explo=1,charge=2,mine=3,
 }
+-- names of keycodes
+local keyn={
+	a=1,z=26,n0=27,n1=28,n2=29,n9=36,
+	space=48,enter=50,bspace=51,
+}
 -- global variables
 local var={}
 -- entity components
@@ -84,22 +89,25 @@ function initTitle(ps)
 	resetEntities()
 	var.delay=0
 	ec.player.move=N
-	if ps=="stage" then
-		trace("== DEEPSCAN ==")
-		trace("SCORE .. "..var.score)
-		trace("HISCORE  "..var.hiscore)
-		trace("--------------")
-		trace("SHOOT .. "..var.stats.shot)
-		trace("HIT .... "..var.stats.hit)
-		trace("RATIO .. "..var.stats.rate.."%")
-		trace("==============")
-	end
+	if ps=="stage" then traceStats() end
+end
+
+function traceStats()
+	trace("== DEEPSCAN ==")
+	trace(" SCORE   "..var.score)
+	trace(" HISCORE "..var.hiscore)
+	trace("--------------")
+	trace(" SHOOTS  "..var.stats.shot)
+	trace(" HITS    "..var.stats.hit)
+	trace(" RATIO   "..var.stats.rate.."%")
+	trace("==============")
 end
 
 function updateTitle(t)
 	var.delay=clamp(var.delay-1,0)
 	if var.delay==1 then exit() end
-	if btnp(6) then var.debug=not var.debug end
+	if keyp(keyn.space) then var.debug=not var.debug end
+	if btnp(6) then var.mute=not var.mute end
 	if btnp(7) then var.delay=31 end
 	if btnp(4) or btnp(5) then
 		if var.delay==0 then
@@ -272,9 +280,14 @@ function updatePlayer(t)
 			resetEntities()
 		end
 	end
+	if keyp(keyn.space) then var.debug=not var.debug end
 	if var.debug then
-		if btnp(7) then reset() end
-		if btnp(6) then var.flashDur=pa.ft//2 end
+		if keyp(keyn.bspace) then reset() end
+		if keyp(keyn.n1) then var.flashDur=pa.ft//2 end
+		if keyp(keyn.n2) then var.advCharge=not var.advCharge end
+		if keyp(keyn.n3) then var.hitMine=not var.hitMine end
+		if keyp(keyn.enter) then var.life=5 end
+		if btnp(7) then var.life=1 end
 	end
 	p.shot=0
 	if p.move then
@@ -282,9 +295,13 @@ function updatePlayer(t)
 		if btn(1) and var.advCharge then dy=p.ay end
 		if btn(2) then dx=-p.ax end
 		if btn(3) then dx=p.ax end
-		if btn(4) then p.shot=1 end
-		if btn(5) then p.shot=2 end
-		if btn(7) then toSinkState() end
+		if btn(4) then p.shot=p.shot|1 end
+		if btn(5) then p.shot=p.shot|2 end
+		if btnp(6) then
+			var.mute=not var.mute
+			if var.mute then playBgm() else playBgm(1) end
+		end
+		if btnp(7) then toSinkState() end
 	end
 	p.vx=clamp(p.vx+dx,-p.maxv,p.maxv)
 	p.vy=dy
@@ -312,7 +329,6 @@ function updatePlayer(t)
 end
 
 function colliPlayerMines(p)
-	if var.debug then return N end
 	for i,m in ipairs(ec.mines) do
 		local ma=m.ani
 		if m.mv and ma.st==1
@@ -381,14 +397,14 @@ function updateDepthCharges(t)
 			end
 		else
 			-- project to left
-			if p.shot==1 and p.shotTickL<1 then
+			if (p.shot&1)>0 and p.shotTickL<1 then
 				c.x=p.x-8
 				c.mv,c.sh=Y,Y
 				p.shotTickL=p.shotInterval
 				sts.shot=clamp(sts.shot+1,1,var.maxInt)
 			end
 			-- project to right
-			if p.shot==2 and p.shotTickR<1 then
+			if (p.shot&2)>0 and p.shotTickR<1 then
 				c.x=p.x+4+p.spd.w
 				c.mv,c.sh=Y,Y
 				p.shotTickR=p.shotInterval
@@ -425,8 +441,9 @@ end
 
 function updateScoreRank(gsc)
 	var.score=clamp(var.score+gsc,0,var.maxScore)
-	var.rank=clamp(100-int(var.score/var.hiscore*100),1,99)
 	var.hiscore=max(var.hiscore,var.score)
+	-- ranking list not implemented yet
+	var.rank=clamp(101-int(var.score/var.hiscore*100),1,99)
 end
 
 function updateSubs(t)
@@ -540,6 +557,7 @@ function drawPlayer()
 	local ani=p.ani
 	local f=ani.cf*4
 	if p.show and ani.cf<5 then
+		-- sinking animation
 		if ani.cf==4 then
 			spr(sp.id+f+28,
 				p.x-sp.ox,p.y-sp.oy+sp.h//2,pal.sea,
@@ -583,7 +601,7 @@ function drawSubs()
 			local sp=s.spd
 			local ani=s.ani
 			if ani.st>=1 then
-				-- explosion anime
+				-- explosion animation
 				spr(sp.id+ani.st*2+ani.cf*2,
 					s.x-sp.ox,s.y-sp.oy,pal.sea,
 					sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
@@ -608,13 +626,13 @@ function drawNavalMines()
 		if m.sh then
 			local sp=m.spd
 			local ma=m.ani
+			-- different size on explosion
 			if ma.st>=2 then
 				spr(sp.id+ma.cf+5-16,
 				m.x-sp.ox,m.y-sp.oy-10,
 				pal.sea,sp.sc,sp.fl,sp.ro,
 				sp.sw,sp.sh+1)
 			elseif ma.st==1 and ma.cf>0 then
-				-- different size on explosion
 				spr(sp.id+ma.cf+ma.st*2-16,
 				m.x-sp.ox,m.y-sp.oy-10,
 				pal.sea,sp.sc,sp.fl,sp.ro,
@@ -665,9 +683,8 @@ function drawHud(t)
 	rect(0,VH+2,VW,HUDH,pal.blue)
 	drawRadar()
 	drawRadarDots(t)
-	-- show texts
 	if t==nil or t%120<60 then
-		printf("SCORE 1",8,VH+4)
+		printf("SCORE",8,VH+4)
 	end
 	printf(format("%05d",var.score),16,VH+12)
 	printf("HISCORE",176,VH+4)
@@ -717,10 +734,6 @@ function playSe(n,t,v)
 	}
 	local se=sfxlib[n]
 	if not var.mute and se then se() end
-end
-
-function sgn(v)
-	return v==0 and 0 or v>0 and 1 or -1
 end
 
 function clamp(v,min,max)

@@ -61,6 +61,28 @@ function pad(s,l,c)
 	return s
 end
 
+function sgn(v)
+	return v==0 and 0 or v>0 and 1 or -1
+end
+
+function clamp(v,min,max)
+	v=v or min or 0
+	if min and v<min then v=min end
+	if max and v>max then v=max end
+	return v
+end
+
+function warp(v,min,max)
+	v=v or min or 0
+	if min and v<min then
+		v=v+(max or min)-(min or 0)
+	end
+	if max and v>max then
+		v=v-(max or min)-(min or 0)
+	end
+	return v
+end
+
 function inc(v,i)
 	_G[v]=_G[v]+(i or 1)
 end
