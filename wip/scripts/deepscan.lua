@@ -65,21 +65,32 @@ function init()
 	var.flashDur=0
 	var.flashFreq=4
 	var.seaFric=0.2
+	var.scoreMulti=10
 	var.rank=99
 	var.score=0
 	var.life=5
 	var.maxInt=9999
 	var.maxScore=99990
-	var.hiscore=var.hiscore or 3000
+	var.extendScore=3000
+	var.extendStep=5000
+	var.hiscore=var.hiscore or var.extendScore
+	var.bonusSubMin=0
+	var.bonusSubMax=32
+	var.bonusSubRate=10
 	var.maxCharges=6
 	var.maxSubs=8
 	var.maxMines=10
 	var.advCharge=Y
 	var.hitMine=Y
+	var.stats={}
 	toScene("title",initTitle)
 end
 
 function resetEntities()
+	var.gamest=N
+	var.bonusSubMin=0
+	var.bonusSubRate=clamp((6-var.life)*20-10,10,90)
+	var.stats.combo=0
 	initPlayer()
 	initSubs()
 end
@@ -100,6 +111,7 @@ function traceStats()
 	trace(" SHOOTS  "..var.stats.shot)
 	trace(" HITS    "..var.stats.hit)
 	trace(" RATIO   "..var.stats.rate.."%")
+	trace(" COMBO   "..var.stats.maxCombo)
 	trace("==============")
 end
 
@@ -158,12 +170,13 @@ function initStage(ps)
 end
 
 function initGame()
+	var.extendScore=min(var.hiscore,var.extendStep)
 	var.rank=99
 	var.score=0
 	var.life=5
-	var.gamest=N
 	var.stats={
 		stime=0,shot=0,hit=0,rate=0,
+		combo=0,maxCombo=0,
 	}
 	resetEntities()
 	-- stage start time
@@ -191,7 +204,7 @@ function initPlayer()
 	pl.move=Y
 	pl.ani={
 		state=0,
-		cf=0,mf=5,ft=45,
+		cf=0,mf=5,ft=45,ti=0,
 	}
 	pl.shot=0
 	-- 2-side DCP cool down timer
@@ -208,9 +221,9 @@ function initPlayer()
 			},
 			-- is show, is move, ticks per move
 			sh=N,mv=N,mt=5,
-			-- anime state, frame index, ticks per frame, max frame
+			-- anime state, max frame, frame index, ticks per frame, start tick
 			ani={
-				st=0,cf=0,ft=10,mf=4,
+				st=0,mf=4,cf=0,ft=10,ti=0,
 			},
 			x=0,y=0,vx=0,vy=0,
 		})
@@ -229,15 +242,22 @@ function initNewSub(s)
 	s.vx=(-d)^d*rnd(4,11)/10
 	s.vy=0
 	s.lv=int(((s.y-AIRH)/(VH-AIRH))*9)+1
+	var.bonusSubMin=clamp(var.bonusSubMin+1,0,var.bonusSubMax)
+	if var.bonusSubMin>=var.bonusSubMax
+		and rnd(0,99)<var.bonusSubRate then
+		s.lv=10
+		var.bonusSubMin=0
+	end
 	s.ani={
-		st=0,cf=0,ft=30,mf=3,
+		st=0,mf=3,cf=0,ft=30,ti=0,
 	}
 	-- mine launcher rate and cool down
 	s.mineRate=7
 	s.mineTick=0
-	s.mineInterval=112
+	s.mineInterval=224
 	s.sh=Y
 	s.mv=Y
+	s.mt=2
 	return s
 end
 
@@ -256,7 +276,7 @@ function initSubs()
 			},
 			sh=N,mv=N,mt=8,
 			ani={
-				st=0,cf=0,ft=20,mf=2,
+				st=0,mf=2,cf=0,ft=20,ti=0,
 			},
 			x=0,y=0,vx=0,vy=0,
 		})
@@ -269,7 +289,9 @@ function updatePlayer(t)
 	local dy,dx=0,0
 	local toSinkState=function()
 		p.move,pa.state=N,1
+		pa.ti=t-1
 		var.flashDur=pa.ft//2
+		playBgm(0)
 		playSe(sfn.explo,pa.ft)
 	end
 	local decreaseLife=function()
@@ -299,7 +321,7 @@ function updatePlayer(t)
 		if btn(5) then p.shot=p.shot|2 end
 		if btnp(6) then
 			var.mute=not var.mute
-			if var.mute then playBgm() else playBgm(1) end
+			if p.move then playBgm(1) end
 		end
 		if btnp(7) then toSinkState() end
 	end
@@ -314,10 +336,10 @@ function updatePlayer(t)
 	end
 	p.shotTickL=clamp(p.shotTickL-1,0)
 	p.shotTickR=clamp(p.shotTickR-1,0)
-	if p.move and colliPlayerMines(p) then
+	if p.move and colliPlayerMines(p,t) then
 		toSinkState()
 	end
-	if pa.state>0 and t%pa.ft==0 then
+	if pa.state>0 and (t-pa.ti)%pa.ft==0 then
 		pa.cf=clamp(pa.cf+1,0,pa.mf)
 		if p.show and pa.cf>=pa.mf then
 			p.show=N
@@ -328,7 +350,7 @@ function updatePlayer(t)
 	end
 end
 
-function colliPlayerMines(p)
+function colliPlayerMines(p,t)
 	for i,m in ipairs(ec.mines) do
 		local ma=m.ani
 		if m.mv and ma.st==1
@@ -336,6 +358,7 @@ function colliPlayerMines(p)
 			and m.x<p.x+p.spd.w-8 then
 			ma.st=2
 			ma.cf,ma.mf=0,2
+			ma.ti=t-1
 			ma.ft=p.ani.mf//2*p.ani.ft
 			if m.x+m.spd.w//2>=p.x+p.spd.w//2 then
 				p.spd.fl=1
@@ -370,6 +393,7 @@ function updateDepthCharges(t)
 			if colliDepthChargeMines(c) then
 				ca.st=1
 				ca.cf,ca.mf=0,4
+				ca.ti=t-1
 				playSe(sfn.charge,ca.mf*ca.ft,12)
 			end
 			if t%c.mt==0 and ca.st==0 then
@@ -388,11 +412,12 @@ function updateDepthCharges(t)
 				else
 					ca.st=1
 					ca.cf,ca.mf=0,4
+					ca.ti=t-1
 					playSe(sfn.charge,ca.mf*ca.ft)
 				end
 			end
 			-- into water
-			if c.y>=AIRH and t%ca.ft==0 then
+			if c.y>=AIRH and (t-ca.ti)%ca.ft==0 then
 				ca.cf=(ca.cf+1)%ca.mf
 			end
 		else
@@ -415,12 +440,13 @@ function updateDepthCharges(t)
 				c.vx,c.vy=0,1+p.vy
 				ca.cf,ca.mf=0,4
 				ca.st=0
+				ca.ti=t-1
 			end
 		end
 	end
 end
 
-function colliSubCharges(s)
+function colliSubCharges(s,t)
 	local sts=var.stats
 	for i,c in ipairs(ec.charges) do
 		if c.mv and c.x+c.spd.w-1>s.x
@@ -428,26 +454,40 @@ function colliSubCharges(s)
 			and c.y+c.spd.h-1>s.y+1
 			and c.y<s.y+s.spd.h-1 then
 			s.ani.st,s.ani.cf=1,0
+			s.ani.mf=3
+			s.ani.ti=t-1
 			s.mv=N
 			c.sh,c.mv=N,N
 			playSe(sfn.explo,c.ani.mf*c.ani.ft,12)
 			sts.hit=clamp(sts.hit+1,0,var.maxInt)
 			sts.rate=int(sts.hit/(sts.shot or sts.hit)*100)
+			sts.combo=clamp(sts.combo+1,0,var.maxInt)
+			sts.maxCombo=max(sts.maxCombo,sts.combo)
 			return Y
 		end
 	end
 	return N
 end
 
-function updateScoreRank(gsc)
+function updateScoreRank(lv)
+	local sts=var.stats
+	local gsc=lv*var.scoreMulti
+	-- bonus sub hit, bonus score by combo
+	if lv>9 then
+		gsc=gsc+sts.combo*10*var.scoreMulti
+	end
 	var.score=clamp(var.score+gsc,0,var.maxScore)
 	var.hiscore=max(var.hiscore,var.score)
 	-- ranking list not implemented yet
 	var.rank=clamp(101-int(var.score/var.hiscore*100),1,99)
+	-- life extend on high score
+	if var.score>=var.extendScore then
+		var.life=clamp(var.life+1,0,99)
+		var.extendScore=clamp(var.extendScore+var.extendStep,0,var.maxScore+1)
+	end
 end
 
 function updateSubs(t)
-	if t%2~=0 then return end
 	local findFreeMine=function()
 		for i,m in ipairs(ec.mines) do
 			if not m.sh then return m end
@@ -457,12 +497,15 @@ function updateSubs(t)
 	local borderR=VW+VW//2
 	for i,s in ipairs(ec.subs) do
 		local sa=s.ani
-		if s.mv and not colliSubCharges(s) then
-			s.x=clamp(s.x+s.vx,borderL,borderR-s.spd.w)
-			s.y=clamp(s.y+s.vy,AIRH,VH-s.spd.h)
-			if s.x<=borderL or s.x>=borderR-s.spd.w then
-				s.mv=N
-				s.sh=N
+		if s.mv and not colliSubCharges(s,t) then
+			if t%s.mt==0 then
+				s.x=clamp(s.x+s.vx,borderL,borderR-s.spd.w)
+				s.y=clamp(s.y+s.vy,AIRH,VH-s.spd.h)
+				if s.x<=borderL or s.x>=borderR-s.spd.w then
+					s.mv=N
+					s.sh=N
+					if s.lv>9 then var.stats.combo=0 end
+				end
 			end
 			s.mineTick=clamp(s.mineTick-1,0)
 			-- launch random mine on screen
@@ -476,17 +519,18 @@ function updateSubs(t)
 						fm.ani.cf,fm.ani.st=0,0
 						fm.ani.mf=2
 						fm.ani.ft=20
+						fm.ani.ti=t-1
 						fm.sh,fm.mv=Y,Y
 						s.mineTick=s.mineInterval
 					end
 				end
 			end
 		elseif s.sh then
-			if t%sa.ft==0 then
-				sa.cf=clamp(sa.cf+1)%sa.mf
+			if (t-sa.ti)%sa.ft==0 then
+				sa.cf=(sa.cf+1)%sa.mf
 			end
 			if sa.st==1 and sa.cf>=sa.mf-1 then
-				updateScoreRank(s.lv*10)
+				updateScoreRank(s.lv)
 				s.sh=N
 			end
 		else
@@ -506,7 +550,7 @@ function updateNavalMines(t)
 			if m.x<0 or m.y>=VH or m.x>VW-m.spd.w then
 				m.mv,m.sh=N,N
 			end
-			if t%ma.ft==0 then
+			if (t-ma.ti)%ma.ft==0 then
 				ma.cf=(ma.cf+1)%ma.mf
 			end
 			-- hit sea surface
@@ -519,6 +563,7 @@ function updateNavalMines(t)
 				else
 					ma.cf,ma.st=0,1
 					ma.mf=3
+					ma.ti=t-1
 					playSe(sfn.mine,ma.mf*ma.ft)
 				end
 			end
@@ -603,19 +648,20 @@ function drawSubs()
 			if ani.st>=1 then
 				-- explosion animation
 				spr(sp.id+ani.st*2+ani.cf*2,
-					s.x-sp.ox,s.y-sp.oy,pal.sea,
+					round(s.x)-sp.ox,s.y-sp.oy,pal.sea,
 					sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
 			else
+				if s.lv>9 then swpPal(pal.enemy,pal.red) end
 				spr(sp.id,
-					s.x-sp.ox,s.y-sp.oy,pal.sea,
+					round(s.x)-sp.ox,s.y-sp.oy,pal.sea,
 					sp.sc,sp.fl,sp.ro,sp.sw,sp.sh)
 				-- level number
-				swpPal(15,pal.sea)
+				swpPal(pal.enemy,pal.sea)
 				spr(128+s.lv,
-					s.x-sp.ox+8*sp.sc-3*s.d*sp.sc,
+					round(s.x)-sp.ox+8*sp.sc-3*sp.fl*sp.sc,
 					s.y-sp.oy,pal.sea,
 					sp.sc,0,sp.ro,1,1)
-				swpPal(15)
+				swpPal(pal.enemy)
 			end
 		end
 	end
@@ -647,7 +693,7 @@ function drawNavalMines()
 	end
 end
 
-function drawRadarDots(t)
+function drawRadarSymbols(t)
 	local radx=(VW-RADW)//2
 	local triw=(RADW-8)//3-1
 	if ec.player and ec.player.show then
@@ -660,6 +706,7 @@ function drawRadarDots(t)
 		for i,s in ipairs(ec.subs) do
 			local x=(s.x+VW//2)/(VW*2)*(RADW-8)
 			local y=(s.y-AIRH)/(VH-AIRH)*(HUDH-12)
+			if s.lv>9 then swpPal(pal.radar,pal.symbol) else swpPal(pal.radar) end
 			spr(178,radx+4+x,VH+8+y,
 				pal.sea,1,0,0,1,1)
 		end
@@ -682,7 +729,7 @@ end
 function drawHud(t)
 	rect(0,VH+2,VW,HUDH,pal.blue)
 	drawRadar()
-	drawRadarDots(t)
+	drawRadarSymbols(t)
 	if t==nil or t%120<60 then
 		printf("SCORE",8,VH+4)
 	end
@@ -752,6 +799,15 @@ function warp(v,min,max)
 		v=v-(max or min)-(min or 0)
 	end
 	return v
+end
+
+function sgn(v)
+	return v==0 and 0 or v>0 and 1 or -1
+end
+
+function round(v,m)
+	m=m or 1
+	return int(v/m+0.5*sgn(v))*m
 end
 
 function swpPal(sc,tc)

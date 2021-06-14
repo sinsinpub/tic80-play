@@ -65,6 +65,11 @@ function sgn(v)
 	return v==0 and 0 or v>0 and 1 or -1
 end
 
+function round(v,m)
+	m=m or 1
+	return math.floor(v/m+0.5*sgn(v))*m
+end
+
 function clamp(v,min,max)
 	v=v or min or 0
 	if min and v<min then v=min end
