@@ -80,10 +80,10 @@ end
 function warp(v,min,max)
 	v=v or min or 0
 	if min and v<min then
-		v=v+(max or min)-(min or 0)
+		v=v+(max or min)-(min or 0)+1
 	end
 	if max and v>max then
-		v=v-(max or min)-(min or 0)
+		v=v-(max or min)+(min or 0)-1
 	end
 	return v
 end
