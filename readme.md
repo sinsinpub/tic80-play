@@ -1,6 +1,6 @@
 My personal backup repo of [TIC-80](https://tic80.com/)
 
-* Start TIC-80 using storage here (stable branch actions build)
+* Start TIC-80 using storage here (stable branch actions build 64-bit)
 
 ```tic80.exe --skip --fs .```
 
@@ -8,7 +8,7 @@ My personal backup repo of [TIC-80](https://tic80.com/)
 
 ```tic80.exe --fs . --cmd surf```
 
-* Start TIC-80 0.90.1706
+* Start TIC-80 0.90.1723 (32-bit)
 
 ```tic80-9.exe --skip --fs .```
 
