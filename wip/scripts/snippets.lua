@@ -24,6 +24,12 @@ function swapPal(c0,c1)
 	end
 end
 
+-- Set blit segment bits, no arg to reset (since 0.8)
+-- see: https://github.com/nesbox/TIC-80/wiki/blit-segment
+function setBlits(b4)
+	poke4(0x03FFC*2, (b4 or 2)%16)
+end
+
 -- Sets the palette index i to specified rgb
 -- or return the colors if no rgb values
 function pal(i,r,g,b)
